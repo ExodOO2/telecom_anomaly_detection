@@ -11,8 +11,8 @@
 | Phase | Description | Owner | Status | Completed At |
 | :--- | :--- | :--- | :--- | :--- |
 | **Step 0** | **Repository Setup, Day-1 Contract & Teammate Unblocking** | Person 1 | **COMPLETED** | 2026-11-20 |
-| **Step 1** | **Dataset Acquisition & Exploratory Data Analysis (EDA)** | Person 1 | *In Progress* | - |
-| **Step 2** | **Data Preparation, Chronological Splitting & GAF Encoding** | Person 1 | *Pending* | - |
+| **Step 1** | **Dataset Acquisition & Exploratory Data Analysis (EDA)** | Person 1 | **COMPLETED** | 2026-11-20 |
+| **Step 2** | **Data Preparation, Chronological Splitting & GAF Encoding** | Person 1 | *In Progress* | - |
 | **Step 3** | **ResNet-18 Transfer Learning & MLflow Experiment Tracking** | Person 1 | *Pending* | - |
 | **Step 4** | **Evaluation, Decision Threshold Tuning & Offline Grad-CAM** | Person 1 | *Pending* | - |
 | **Step 5** | **Production Inference Wrapper & Artifact Handoff** | Person 1 | *Pending* | - |
@@ -151,6 +151,43 @@ d:\telecom_anomaly_detection\
 
 ---
 
-## Next Action: Step 1 (Dataset Acquisition & EDA)
-* **Input:** Real-world Kaggle 4G LTE CSV (Josep Vidal competition).
-* **Deliverable:** `notebooks/eda.ipynb` or `ml/eda_report.py` analyzing class balance, temporal continuity, and KPI correlations.
+## Step 1 Detailed Log: Dataset Acquisition & Exploratory Data Analysis (EDA)
+
+In Step 1, we ingested the official competition dataset files from Josep Vidal's *Anomaly Detection in 4G Cellular Networks* competition and executed automated Exploratory Data Analysis via `ml/eda.py`.
+
+### 1. Dataset Files Placed in `data/raw/`
+* `ML-MATT-CompetitionQT2021_train.csv` (2.87 MB): 36,904 rows, 14 columns, labeled with `Unusual`.
+* `ML-MATT-CompetitionQT2021_test.csv` (630 KB): 9,158 rows, 13 columns, unlabeled test set.
+
+*(Both files are git-ignored via `.gitignore` to preserve repository portability).*
+
+### 2. Key EDA Findings & Mathematical Properties
+
+1. **Delimiter & Encoding:** Semicolon-delimited (`;`), UTF-8 encoded.
+2. **Data Integrity:** **Zero missing values (NaNs)** across all 36,904 rows and 14 features. No imputation needed.
+3. **Target Class Distribution (`Unusual`):**
+   * **Normal (`0`):** 26,721 samples (**72.41%**)
+   * **Anomaly / Unusual (`1`):** 10,183 samples (**27.59%**)
+   * *Engineering takeaway:* Moderately imbalanced (ratio ~2.6:1). Perfectly manageable using class-weighted loss `CrossEntropyLoss(weight=[1.0, 2.62])` and decision threshold tuning.
+4. **Cell Tower Distribution:**
+   * 33 unique base station sectors (`CellName`, e.g., `5ALTE`, `4CLTE`, `3BLTE`).
+   * Average of ~1,118 samples per tower (spanning ~12-14 days of 15-minute telemetry).
+5. **The 3 Core Computer Vision "RGB" KPIs:**
+   * **Red Channel (`PRBUsageDL`):** Radio resource block usage % (Min: 0.0, Mean: 2.12%, Max: 77.51%).
+   * **Green Channel (`meanThr_DL`):** Mean user throughput (Min: 0.0, Mean: 0.57 Mbps, Max: 19.60 Mbps).
+   * **Blue Channel (`meanUE_DL`):** Active connected devices (Min: 0.0, Mean: 1.18 devices, Max: 3.04 devices).
+
+### 3. Files Created in Step 1
+* `ml/eda.py`: Automated statistical profiling script calculating dimensions, missing values, class ratios, and metric percent differences between normal and anomalous operational states.
+
+---
+
+## Next Action: Step 2 (Data Preparation & GAF Encoding Pipeline)
+* **Script:** `ml/data_prep.py`
+* **Tasks:**
+  1. Split dataset into Train (70%), Validation (15%), and Test (15%) splits (using Cell-Holdout or chronological per-cell partitioning to eliminate leakage).
+  2. Fit `MinMaxScaler([-1, 1])` on Train only $\rightarrow$ save `artifacts/scaler.joblib`.
+  3. Generate sliding windows ($W=16$, stride $S=2$).
+  4. Compute 3-channel Gramian Angular Field (GAF) images via `pyts`.
+  5. Save PNGs in standard PyTorch `ImageFolder` structure under `data/gaf_images/`.
+
