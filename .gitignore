@@ -1,0 +1,33 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Data files (keep folders via .gitkeep)
+data/raw/*
+!data/raw/.gitkeep
+data/gaf_images/*
+!data/gaf_images/.gitkeep
+
+# MLflow tracking
+mlruns/
+mlartifacts/
+
+# Large model artifacts if needed (ResNet-18 is ~45MB)
+# artifacts/*.pt
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# IDE & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log

@@ -1,0 +1,19 @@
+version: '3.8'
+
+# Docker Compose orchestration
+# Owned by: Person 3 (DevOps & MLOps Engineer)
+
+services:
+  telecom-api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: telecom_qos_api
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
