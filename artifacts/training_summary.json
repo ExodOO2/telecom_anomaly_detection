@@ -1,0 +1,20 @@
+{
+  "model_name": "resnet18",
+  "class_mapping": {
+    "anomaly": 0,
+    "normal": 1
+  },
+  "best_val_anomaly_f1": 0.5102,
+  "total_training_minutes": 6.22,
+  "epochs_completed": 9,
+  "device": "cuda",
+  "checkpoint_file": "best_resnet18.pt",
+  "validation_metrics": {
+    "true_positives": 511,
+    "false_negatives": 222,
+    "false_positives": 759,
+    "true_negatives": 1206,
+    "anomaly_recall": 0.6971,
+    "anomaly_precision": 0.4024
+  }
+}

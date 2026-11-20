@@ -18,6 +18,8 @@ data/gaf_images/*
 # MLflow tracking
 mlruns/
 mlartifacts/
+mlflow.db
+*.db
 
 # Large model artifacts if needed (ResNet-18 is ~45MB)
 # artifacts/*.pt

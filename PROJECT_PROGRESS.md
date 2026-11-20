@@ -13,7 +13,7 @@
 | **Step 0** | **Repository Setup, Day-1 Contract & Teammate Unblocking** | Person 1 | **COMPLETED** | 2026-11-20 |
 | **Step 1** | **Dataset Acquisition & Exploratory Data Analysis (EDA)** | Person 1 | **COMPLETED** | 2026-11-20 |
 | **Step 2** | **Data Preparation, Chronological Splitting & GAF Encoding** | Person 1 | **COMPLETED** | 2026-11-20 |
-| **Step 3** | **ResNet-18 Transfer Learning & MLflow Experiment Tracking** | Person 1 | *In Progress* | - |
+| **Step 3** | **ResNet-18 Transfer Learning & MLflow Experiment Tracking** | Person 1 | **COMPLETED** | 2026-11-21 |
 | **Step 4** | **Evaluation, Decision Threshold Tuning & Offline Grad-CAM** | Person 1 | *Pending* | - |
 | **Step 5** | **Production Inference Wrapper & Artifact Handoff** | Person 1 | *Pending* | - |
 | **Step 6** | **End-to-End Integration, Docker Verification & Jury Defense** | All Team | *Pending* | - |
@@ -311,14 +311,172 @@ The pipeline generated **18,213 total GAF images** in **37.2 seconds** across th
 
 ---
 
-## Next Action: Step 3 (ResNet-18 Transfer Learning & MLflow Tracking)
-* **Script:** `ml/train.py`
+## Step 3 Detailed Log: ResNet-18 Transfer Learning, Indexing Tweak & MLflow Experiment Tracking
+
+In Step 3, we trained a Computer Vision binary classification model on our 3-channel Gramian Angular Field (GAF) images using transfer learning with a pretrained ResNet-18 architecture, tracked via MLflow.
+
+### 1. Model Architecture & Pipeline Setup
+* **Backbone:** `torchvision.models.resnet18(weights="DEFAULT")` pretrained on ImageNet (11.7 million parameters).
+* **Head Adaptation:** Replaced the final 1,000-class fully connected layer (`model.fc`) with:
+  ```python
+  model.fc = nn.Sequential(
+      nn.Dropout(p=0.3),
+      nn.Linear(512, 2)  # Binary classification: Anomaly vs Normal
+  )
+  ```
+* **Input Transforms:**
+  * Bilinear resizing to $224 \times 224$ (ResNet native input resolution).
+  * Standard ImageNet channel normalization: $\text{mean}=[0.485, 0.456, 0.406]$, $\text{std}=[0.229, 0.224, 0.225]$.
+  * **Strict Domain Constraint:** Absolutely **no random horizontal/vertical flips or rotations**. GAF images encode chronological time from top-left to bottom-right; flipping or rotating would reverse or destroy the arrow of time!
+* **Hardware & Runtime Environment:** Local NVIDIA GeForce RTX 3070 Laptop GPU (8 GB VRAM, CUDA 12.4), PyTorch 2.6.0+cu124, Python 3.12.9 on Windows.
+* **DataLoader Optimization:** `num_workers=0` (eliminating Windows `multiprocessing.spawn` latency and memory cloning) with `pin_memory=True`.
+
+---
+
+### 2. The Initial Run & Bug Discovery (The Post-Training Tweak)
+
+During initial model training, our training loop logged a seemingly strong validation F1-score of ~0.80. However, an in-depth confusion matrix check revealed a subtle class-indexing bug originating from PyTorch's `ImageFolder`:
+
+#### A. Root Cause: PyTorch `ImageFolder` Alphabetical Sorting
+PyTorch's `ImageFolder` automatically sorts subfolder names alphabetically to assign integer targets:
+* Subfolder `anomaly/` $\rightarrow$ assigned target `0` ('a' precedes 'n')
+* Subfolder `normal/` $\rightarrow$ assigned target `1`
+
+#### B. How the Bug Affected the Initial Training Run:
+1. **Inverted Class Weights:**
+   The initial loss weighting assumed index `0 = normal` and `1 = anomaly`:
+   ```python
+   # BUGGY CODE:
+   count_normal = np.sum(targets == 0)   # Counted anomalies (3,545)!
+   count_anomaly = np.sum(targets == 1)  # Counted normals (9,200)!
+   weight_anomaly = float(count_normal) / float(count_anomaly)  # 3,545 / 9,200 = 0.38
+   class_weights = torch.tensor([1.0, 0.38])
+   ```
+   Instead of penalizing missed anomalies by $\sim 2.60\times$, index 0 (`anomaly`) received weight `1.0` while index 1 (`normal`) was downweighted to `0.38`.
+2. **Evaluation Metric Inversion:**
+   Scikit-Learn's `precision_score`, `recall_score`, and `f1_score` default to `pos_label=1` when `average='binary'`. Because index 1 was actually `normal`, the training loop was tracking, optimizing, and checkpointing based on the **Normal** class F1-Score instead of the Anomaly F1-Score!
+3. **The Resulting Impact:**
+   The model converged to favoring majority normals:
+   * Caught Anomalies (TP): only 282 out of 733 (38.5%).
+   * **Missed Anomalies (FN): 451 out of 733 (61.5% missed outages!).**
+
+---
+
+### 3. The Tweak & Fix Implemented in `ml/train.py`
+
+We refactored `ml/train.py` to dynamically query `dataset.class_to_idx`:
+
+```python
+def compute_class_weights(dataset: ImageFolder, device: torch.device):
+    # Dynamically extract indices from dataset
+    anomaly_idx = dataset.class_to_idx["anomaly"]  # 0
+    normal_idx = dataset.class_to_idx["normal"]    # 1
+
+    targets = np.array(dataset.targets)
+    count_normal = np.sum(targets == normal_idx)   # 9,200
+    count_anomaly = np.sum(targets == anomaly_idx) # 3,545
+
+    # Correct inverse frequency: Anomaly receives 2.60x higher weight
+    weight_normal = 1.0
+    weight_anomaly = float(count_normal) / float(count_anomaly)  # 2.60
+
+    class_weights = torch.zeros(2, dtype=torch.float, device=device)
+    class_weights[normal_idx] = weight_normal
+    class_weights[anomaly_idx] = weight_anomaly
+    return class_weights, anomaly_idx, normal_idx
+```
+
+And in `evaluate()`:
+```python
+# Pos_label explicitly pinned to the anomaly class index
+precision = precision_score(all_targets, all_preds, pos_label=anomaly_idx, zero_division=0)
+recall = recall_score(all_targets, all_preds, pos_label=anomaly_idx, zero_division=0)
+f1 = f1_score(all_targets, all_preds, pos_label=anomaly_idx, zero_division=0)
+```
+This guaranteed that:
+1. The loss function actively penalizes missed anomalies $2.60\times$ more than false alarms.
+2. The early stopping mechanism and `torch.save(..., "artifacts/best_resnet18.pt")` checkpointing strictly maximize true **Anomaly F1-Score**.
+3. A complete confusion matrix and classification report are automatically generated at the end of training using the best saved weights.
+
+---
+
+### 4. Retraining Results (NVIDIA RTX 3070 GPU)
+
+Training executed across 9 epochs in **6.22 minutes** (~41 seconds/epoch). Early stopping triggered at Epoch 9 after no improvement past Epoch 6.
+
+```text
+----------------------------------------------------------------------------------
+ Epoch  | Train Loss |  Val Loss  |  Val Acc  | Anom Prec | Anom Rec | Anom F1  | Status
+----------------------------------------------------------------------------------
+   1    |   0.7366   |   0.6131   |  0.6857   |  0.4086   |  0.3506  |  0.3774  | * BEST (42.2s)
+   2    |   0.6747   |   0.8906   |  0.4577   |  0.3182   |  0.8718  |  0.4663  | * BEST (41.3s)
+   3    |   0.6370   |   0.7237   |  0.5834   |  0.3274   |  0.5061  |  0.3976  | patience 1/3 (41.1s)
+   4    |   0.5976   |   0.6610   |  0.6334   |  0.3944   |  0.6521  |  0.4915  | * BEST (41.3s)
+   5    |   0.5453   |   0.6946   |  0.6171   |  0.3862   |  0.6944  |  0.4963  | * BEST (41.1s)
+   6    |   0.4943   |   0.6973   |  0.6364   |  0.4024   |  0.6971  |  0.5102  | * BEST (40.9s)
+   7    |   0.4210   |   0.7271   |  0.6386   |  0.3818   |  0.5334  |  0.4451  | patience 1/3 (42.1s)
+   8    |   0.3413   |   0.7898   |  0.6067   |  0.3673   |  0.6194  |  0.4611  | patience 2/3 (41.3s)
+   9    |   0.2637   |   0.8049   |  0.6642   |  0.3981   |  0.4611  |  0.4273  | patience 3/3 (40.8s)
+
+[Early Stopping] No improvement in Anomaly F1 for 3 epochs. Stopping.
+```
+
+* **Best Epoch:** **Epoch 6**
+* **Best Validation Anomaly F1-Score:** **0.5102**
+* **Anomaly Recall:** **69.71%**
+* **Anomaly Precision:** **40.24%**
+
+---
+
+### 5. Final Validation Confusion Matrix & Classification Report (Holdout Antennas)
+
+```text
+Confusion Matrix on Validation Set (2,698 samples):
+  True Anomalies (733 total):
+    - True Positives  (TP - Caught Anomalies):   511 (69.7%)
+    - False Negatives (FN - Missed Anomalies):   222 (30.3%)
+  True Normals (1,965 total):
+    - True Negatives  (TN - Correct Normal):    1,206 (61.4%)
+    - False Positives (FP - False Alarms):       759 (38.6%)
+
+Classification Report:
+              precision    recall  f1-score   support
+     anomaly     0.4024    0.6971    0.5102       733
+      normal     0.8445    0.6137    0.7109      1965
+
+    accuracy                         0.6364      2698
+   macro avg     0.6235    0.6554    0.6106      2698
+weighted avg     0.7244    0.6364    0.6564      2698
+```
+
+### 6. Impact of the Tweak: Before vs. After Comparison
+
+| Metric | First Run (Inverted Index) | Retrained Run (Fixed & Reweighted) | Telecom Ops Real-World Value |
+| :--- | :---: | :---: | :--- |
+| **Caught Anomalies (TP)** | 282 (38.5%) | **511 (69.7%)** | **+229 real cellular outages detected** |
+| **Missed Anomalies (FN)** | 451 (61.5%) | **222 (30.3%)** | **Missed SLA violations cut in half!** |
+| **False Alarms (FP)** | 340 (17.3%) | **759 (38.6%)** | Acceptable trade-off for high recall |
+| **Anomaly Recall** | 38.5% | **69.71%** | Model detects 7 out of 10 network outages |
+| **Anomaly F1-Score** | 0.42 | **0.5102** | Checkpointed on true anomaly detection peak |
+
+**Why Having More False Positives Than False Negatives Is Preferable:**
+In telecom network operations, a **False Negative (missed anomaly)** means severe tower congestion or throughput collapse goes undetected until paying subscribers experience dropped calls and submit complaints. A **False Positive (false alarm)** merely flags the cell for routine automated monitoring. High recall (69.7%) provides the necessary safety net.
+
+### 7. Files Created / Updated in Step 3
+* `ml/train.py`: Full training script with dynamic class mapping, inverse class weighting, targeted anomaly metric tracking, early stopping, and confusion matrix reporting.
+* `artifacts/best_resnet18.pt`: Peak model weights checkpoint (44.8 MB, Epoch 6).
+* `artifacts/training_summary.json`: Serialized metadata and confusion matrix metrics.
+* `.gitignore`: Updated to ignore local SQLite `mlflow.db` and `*.db` tracking files.
+
+---
+
+## Next Action: Step 4 (Evaluation, Decision Threshold Tuning & Offline Grad-CAM)
+* **Script:** `ml/evaluate.py`
 * **Tasks:**
-  1. Load images using standard PyTorch `ImageFolder` and `DataLoader`.
-  2. Apply PyTorch transforms (Bilinear resize to $224 \times 224$, ImageNet normalization; strictly **no flips/rotations**).
-  3. Load pretrained `torchvision.models.resnet18(weights="DEFAULT")` and replace `model.fc` with `Linear(512, 2)`.
-  4. Compute inverse class weights (`weight=[1.0, 2.60]`) for `CrossEntropyLoss`.
-  5. Train with `AdamW(lr=1e-4)`, tracking epoch loss and validation F1-score with **MLflow**.
-  6. Save best weights checkpoint to `artifacts/best_resnet18.pt`.
+  1. Load `artifacts/best_resnet18.pt` and evaluate on the untouched **Test Set** (`data/gaf_images/test`, 2,770 images across 5 unseen cell towers).
+  2. Generate and export a high-resolution Confusion Matrix heatmap (`artifacts/eval_confusion_matrix.png`).
+  3. Compute ROC-AUC and Precision-Recall curves (`artifacts/eval_roc_pr_curves.png`).
+  4. Perform a decision threshold sweep ($0.10 \dots 0.90$) to plot optimal operational trade-offs between precision and recall (`artifacts/eval_threshold_tuning.png`).
+  5. Compute Grad-CAM attention heatmaps on `model.layer4[-1]` to visualize which KPI time-steps drove anomaly classifications (`artifacts/eval_gradcam_sample.png`).
 
 
