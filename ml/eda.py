@@ -92,6 +92,7 @@ def plot_correlation_matrix(df: pd.DataFrame, output_path: Path):
         fontweight="bold",
         pad=15,
     )
+
     plt.savefig(output_path, dpi=200, bbox_inches="tight")
     plt.close()
     copy_to_brain(output_path)
