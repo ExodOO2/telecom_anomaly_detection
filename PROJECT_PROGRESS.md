@@ -12,8 +12,8 @@
 | :--- | :--- | :--- | :--- | :--- |
 | **Step 0** | **Repository Setup, Day-1 Contract & Teammate Unblocking** | Person 1 | **COMPLETED** | 2026-11-20 |
 | **Step 1** | **Dataset Acquisition & Exploratory Data Analysis (EDA)** | Person 1 | **COMPLETED** | 2026-11-20 |
-| **Step 2** | **Data Preparation, Chronological Splitting & GAF Encoding** | Person 1 | *In Progress* | - |
-| **Step 3** | **ResNet-18 Transfer Learning & MLflow Experiment Tracking** | Person 1 | *Pending* | - |
+| **Step 2** | **Data Preparation, Chronological Splitting & GAF Encoding** | Person 1 | **COMPLETED** | 2026-11-20 |
+| **Step 3** | **ResNet-18 Transfer Learning & MLflow Experiment Tracking** | Person 1 | *In Progress* | - |
 | **Step 4** | **Evaluation, Decision Threshold Tuning & Offline Grad-CAM** | Person 1 | *Pending* | - |
 | **Step 5** | **Production Inference Wrapper & Artifact Handoff** | Person 1 | *Pending* | - |
 | **Step 6** | **End-to-End Integration, Docker Verification & Jury Defense** | All Team | *Pending* | - |
@@ -215,12 +215,66 @@ Moderate cross-correlations ($0.49 - 0.79$) guarantee non-redundant, complementa
 
 ---
 
-## Next Action: Step 2 (Data Preparation & GAF Encoding Pipeline)
-* **Script:** `ml/data_prep.py`
+## Step 2 Detailed Log: Data Preparation, Leakage-Free Splitting & GAF Image Generation
+
+In Step 2, we engineered the mathematical bridge transforming raw tabular 4G telemetry into a partitioned, computer-vision-ready dataset of 3-channel RGB PNG images organized directly for PyTorch `ImageFolder`.
+
+### 1. Chronological Day Reconstruction
+Because the competition CSV omitted absolute calendar dates and presented timestamps as `HH:MM`, we reconstructed continuous 24-hour day sequences for every base station:
+* Mapped `Time` strings to integer minutes from midnight ($0 \dots 1425$).
+* Used `groupby("mins").cumcount()` to group repeated timestamps into sequential operational days ($\text{Day } 0 \dots 13$).
+* Sorted each antenna strictly by `[day, mins]`, guaranteeing true 15-minute chronological continuity across every 16-step window.
+
+### 2. Leakage-Free Cell-Holdout Splitting Protocol
+To eliminate temporal data leakage caused by overlapping sliding windows, we partitioned the dataset **by cell tower** rather than randomly shuffling rows:
+* **Train Set (70.0%):** 23 base station sectors (25,825 rows).
+* **Validation Set (14.8%):** 5 base station sectors (5,467 rows).
+* **Test Set (15.2%):** 5 base station sectors (5,612 rows).
+* *Production Value:* The model is evaluated strictly on antennas it never saw during training, proving true spatial generalization to new network infrastructure.
+
+### 3. Scaler Fitting on Training Split ONLY
+* Fitted `MinMaxScaler(feature_range=(-1, 1))` strictly on the 3 core KPIs of the **Train set only**.
+* Added safety clamping `np.clip(scaled, -1.0 + 1e-7, 1.0 - 1e-7)` to guarantee valid domain limits for $\arccos(\tilde{x})$.
+* **Saved Artifact:** Serialized to `artifacts/scaler.joblib`. Person 2's FastAPI service and Person 3's Docker container load this exact preprocessor for online inference.
+
+### 4. Gramian Angular Field (GAF) 3-Channel Encoding
+* **Window Size ($W$):** 16 consecutive timestamps ($16 \times 15\text{ min} = 4\text{ hours}$).
+* **Stride ($S$):** 2 steps (slides forward by 30 minutes, avoiding redundant near-identical frames).
+* **Target Labeling:** Assigned according to the **final timestamp ($t_{16}$)** in the window. Answers: *"Given the 4-hour trend up to now, is the tower currently in an anomalous state?"*
+* **3-Channel Mapping:**
+  * **Red (R):** `PRBUsageDL` GASF matrix ($16 \times 16$).
+  * **Green (G):** `meanThr_DL` GASF matrix ($16 \times 16$).
+  * **Blue (B):** `meanUE_DL` GASF matrix ($16 \times 16$).
+* **Image Output:** Stacked into `(16, 16, 3)`, mapped from $[-1, 1]$ to unsigned 8-bit $[0, 255]$, and smoothly upscaled to $64 \times 64$ PNG via PIL bilinear interpolation.
+
+### 5. Final Dataset Generated (`data/gaf_images/`)
+
+The pipeline generated **18,213 total GAF images** in **37.2 seconds** across the standard PyTorch `ImageFolder` hierarchy:
+
+| Dataset Split | Towers | Total Images | Normal (0) | Anomaly (1) | Anomaly % |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Train** | 23 | **12,745** | 9,200 | 3,545 | **27.8%** |
+| **Validation** | 5 | **2,698** | 1,965 | 733 | **27.2%** |
+| **Test** | 5 | **2,770** | 2,019 | 751 | **27.1%** |
+| **Total** | **33** | **18,213** | **13,184** | **5,029** | **27.6%** |
+
+*(Notice the rock-solid consistency of the anomaly ratio across all three independent splits).*
+
+### 6. Files Created / Updated in Step 2
+* `ml/data_prep.py`: Full end-to-end data preparation script.
+* `artifacts/scaler.joblib`: Fitted MinMaxScaler saved and verified.
+* `data/gaf_images/`: Complete folder hierarchy with 18,213 PNG images (git-ignored to protect repository size).
+
+---
+
+## Next Action: Step 3 (ResNet-18 Transfer Learning & MLflow Tracking)
+* **Script:** `ml/train.py`
 * **Tasks:**
-  1. Split dataset into Train (70%), Validation (15%), and Test (15%) splits (using Cell-Holdout or chronological per-cell partitioning to eliminate leakage).
-  2. Fit `MinMaxScaler([-1, 1])` on Train only $\rightarrow$ save `artifacts/scaler.joblib`.
-  3. Generate sliding windows ($W=16$, stride $S=2$).
-  4. Compute 3-channel Gramian Angular Field (GAF) images via `pyts`.
-  5. Save PNGs in standard PyTorch `ImageFolder` structure under `data/gaf_images/`.
+  1. Load images using standard PyTorch `ImageFolder` and `DataLoader`.
+  2. Apply PyTorch transforms (Bilinear resize to $224 \times 224$, ImageNet normalization; strictly **no flips/rotations**).
+  3. Load pretrained `torchvision.models.resnet18(weights="DEFAULT")` and replace `model.fc` with `Linear(512, 2)`.
+  4. Compute inverse class weights (`weight=[1.0, 2.60]`) for `CrossEntropyLoss`.
+  5. Train with `AdamW(lr=1e-4)`, tracking epoch loss and validation F1-score with **MLflow**.
+  6. Save best weights checkpoint to `artifacts/best_resnet18.pt`.
+
 
