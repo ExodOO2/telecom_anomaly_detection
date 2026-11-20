@@ -237,6 +237,50 @@ To eliminate temporal data leakage caused by overlapping sliding windows, we par
 * Added safety clamping `np.clip(scaled, -1.0 + 1e-7, 1.0 - 1e-7)` to guarantee valid domain limits for $\arccos(\tilde{x})$.
 * **Saved Artifact:** Serialized to `artifacts/scaler.joblib`. Person 2's FastAPI service and Person 3's Docker container load this exact preprocessor for online inference.
 
+#### Deep Dive: What is `joblib`, Why We Used It & How Person 2 Must Use It
+
+1. **What is `joblib`?**
+   * `joblib` is Python's standard library for high-efficiency serialization (saving and loading) of Python objects that contain NumPy arrays and Scikit-Learn transformers.
+   * Compared to standard Python `pickle`, `joblib` is heavily optimized for scientific data structures: it avoids redundant memory copies, writes compact binary files, and executes near-instantaneous disk reads.
+
+2. **Why did we use it? (`joblib.dump(scaler, 'artifacts/scaler.joblib')`)**
+   * When we ran `scaler.fit(train_df[KPIS].values)`, the `MinMaxScaler` calculated and memorized the mathematical parameters of the entire 4G cellular training distribution:
+     * `scaler.data_min_`: the minimum observed baseline for `PRBUsageDL`, `meanThr_DL`, `meanUE_DL`.
+     * `scaler.data_max_`: the maximum observed baseline.
+     * `scaler.scale_`: the exact multiplicative scaling factors mapping raw values into $[-1, 1]$.
+   * **The Production Hazard:** If we did not save this fitted object, live inference in FastAPI would have no way to normalize incoming traffic. If a backend engineer mistakenly calls `.fit_transform()` on an incoming 16-step request, the scaling would be calculated relative to that single 16-step slice instead of the global network baseline, completely distorting the Gramian Angular Field and destroying model predictions!
+   * Saving `artifacts/scaler.joblib` locks in the exact training baseline forever.
+
+3. **How Person 2 (Backend Developer) Must Use It in Production:**
+   In `ml/inference.py` (which is imported by `api/app.py`), Person 2 loads the scaler **once at application startup** into memory (not on every HTTP request):
+
+   ```python
+   import joblib
+   import numpy as np
+   from pathlib import Path
+
+   # 1. Load the preprocessor once during server initialization
+   SCALER_PATH = Path("artifacts/scaler.joblib")
+   scaler = joblib.load(SCALER_PATH)
+
+   def predict_window(kpi_window: list[dict]) -> dict:
+       # 2. Extract 16x3 matrix from incoming JSON payload
+       raw_values = np.array([
+           [step["PRBUsageDL"], step["meanThr_DL"], step["meanUE_DL"]]
+           for step in kpi_window
+       ])
+
+       # 3. Apply the EXACT training distribution transform (NEVER call fit!)
+       scaled_values = scaler.transform(raw_values)
+       
+       # 4. Add safety clamping for arccos
+       scaled_values = np.clip(scaled_values, -1.0 + 1e-7, 1.0 - 1e-7)
+
+       # 5. Pass scaled_values to GAF encoding -> ResNet-18 forward pass
+       ...
+   ```
+
+
 ### 4. Gramian Angular Field (GAF) 3-Channel Encoding
 * **Window Size ($W$):** 16 consecutive timestamps ($16 \times 15\text{ min} = 4\text{ hours}$).
 * **Stride ($S$):** 2 steps (slides forward by 30 minutes, avoiding redundant near-identical frames).
