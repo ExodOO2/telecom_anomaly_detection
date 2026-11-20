@@ -226,44 +226,6 @@ def plot_normal_vs_anomaly_distributions(df: pd.DataFrame, output_path: Path):
     print(f"  [+] Saved Distribution Comparison Plot: {output_path.name}")
 
 
-def print_feature_selection_report(df: pd.DataFrame):
-    """
-    Function 5: Prints a rigorous mathematical feature selection report.
-    Answers: Why discard 10 features and retain specifically PRBUsageDL, meanThr_DL, meanUE_DL?
-    """
-    numeric_df = df.select_dtypes(include=[np.number])
-    corr = numeric_df.corr()
-
-    print("\n" + "=" * 78)
-    print("MATHEMATICAL & DOMAIN FEATURE SELECTION JUSTIFICATION REPORT")
-    print("=" * 78)
-
-    print("\n[A] MULTICOLLINEARITY & REDUNDANCY ELIMINATION:")
-    print(f"  1. Throughput: corr(meanThr_DL, maxThr_DL) = {corr.loc['meanThr_DL', 'maxThr_DL']:.4f}")
-    print("     -> Action: DISCARD maxThr_DL. Mean throughput captures sustained QoS better than peak bursts.")
-    print(f"  2. User Count: corr(meanUE_DL, maxUE_DL)   = {corr.loc['meanUE_DL', 'maxUE_DL']:.4f}")
-    print("     -> Action: DISCARD maxUE_DL. User equipment count is 85% redundant.")
-    print(f"  3. Total Users: corr(maxUE_UL, maxUE_UL+DL) = {corr.loc['maxUE_UL', 'maxUE_UL+DL']:.4f}")
-    print("     -> Action: DISCARD composite maxUE columns (95% redundant).")
-
-    print("\n[B] TELECOM ASYMMETRY JUSTIFICATION (DOWNLINK OVER UPLINK):")
-    print("  - Mobile subscriber traffic is overwhelmingly Downlink-heavy (~85-90% video/browsing).")
-    print("  - Downlink radio congestion directly impairs user perceived Quality of Service (QoS).")
-    print("  - Uplink metrics (PRBUsageUL, meanThr_UL, meanUE_UL) exhibit lower signal-to-noise ratio.")
-
-    print("\n[C] FINAL 3-CHANNEL 'RGB' MAPPING SELECTION:")
-    print("  - RED CHANNEL   (R): PRBUsageDL -> Physical Radio Resource Congestion")
-    print("  - GREEN CHANNEL (G): meanThr_DL -> User Throughput & Perceived Speed")
-    print("  - BLUE CHANNEL  (B): meanUE_DL  -> Active Device Volume & Crowd Demand")
-    print("  -> Inter-channel correlations:")
-    print(f"     * corr(PRBUsageDL, meanThr_DL) = {corr.loc['PRBUsageDL', 'meanThr_DL']:.4f}")
-    print(f"     * corr(PRBUsageDL, meanUE_DL)  = {corr.loc['PRBUsageDL', 'meanUE_DL']:.4f}")
-    print(f"     * corr(meanThr_DL, meanUE_DL)  = {corr.loc['meanThr_DL', 'meanUE_DL']:.4f}")
-    print("  -> Conclusion: Moderate cross-correlation (0.48 - 0.79) guarantees high orthogonality")
-    print("     and complementary information across the 3 RGB channels.")
-    print("=" * 78 + "\n")
-
-
 def main():
     print("=" * 78)
     print("EXECUTING COMPREHENSIVE EDA & PLOTTED FEATURE SELECTION PIPELINE")
@@ -278,9 +240,6 @@ def main():
     plot_feature_target_correlation(df, ARTIFACTS_DIR / "eda_feature_importance.png")
     plot_diurnal_traffic_patterns(df, ARTIFACTS_DIR / "eda_diurnal_traffic.png")
     plot_normal_vs_anomaly_distributions(df, ARTIFACTS_DIR / "eda_distributions.png")
-
-    # 3. Print feature selection defense report
-    print_feature_selection_report(df)
 
     print("[SUCCESS] All 4 EDA visualization plots generated and saved to artifacts/.")
 
