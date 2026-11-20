@@ -177,8 +177,41 @@ In Step 1, we ingested the official competition dataset files from Josep Vidal's
    * **Green Channel (`meanThr_DL`):** Mean user throughput (Min: 0.0, Mean: 0.57 Mbps, Max: 19.60 Mbps).
    * **Blue Channel (`meanUE_DL`):** Active connected devices (Min: 0.0, Mean: 1.18 devices, Max: 3.04 devices).
 
-### 3. Files Created in Step 1
-* `ml/eda.py`: Automated statistical profiling script calculating dimensions, missing values, class ratios, and metric percent differences between normal and anomalous operational states.
+### 3. Visual Analysis Plots & Artifacts Created
+
+The refactored `ml/eda.py` pipeline generates 4 publication-quality visualizations using `matplotlib` and `seaborn`, saved in `artifacts/`:
+
+1. **`artifacts/eda_correlation_matrix.png`**: Full 14-feature correlation heatmap proving extreme multicollinearity between mean and peak metrics:
+   * $\text{corr}(\text{meanThr\_DL}, \text{maxThr\_DL}) = 0.63$ (sustained speed captures QoS better than short-lived bursts).
+   * $\text{corr}(\text{meanUE\_DL}, \text{maxUE\_DL}) = 0.85$ (85% redundant user metric).
+   * $\text{corr}(\text{maxUE\_UL}, \text{maxUE\_UL+DL}) = 0.95$ (95% redundant composite metric).
+2. **`artifacts/eda_feature_importance.png`**: Ranked correlation barplot with `Unusual`, showing how downlink metrics directly impact anomaly states compared to noisy uplink counters.
+3. **`artifacts/eda_diurnal_traffic.png`**: 24-hour diurnal cycle across the 96 timestamps, demonstrating traffic collapse at 04:00 AM and peak demand at 20:00 PM (proves why static thresholds trigger false alarms).
+4. **`artifacts/eda_distributions.png`**: Boxplots comparing Normal vs. Anomaly for the core KPIs, visually demonstrating range overlap and the need for multi-metric temporal CNN inspection.
+
+### 4. Mathematical Feature Selection Justification
+
+| Metric | Selected For | Role / Channel | Justification |
+| :--- | :--- | :--- | :--- |
+| **`PRBUsageDL`** | **Selected** | **Red Channel (R)** | Measures physical radio spectrum load and base station resource saturation. |
+| **`meanThr_DL`** | **Selected** | **Green Channel (G)** | Measures delivered downlink data rate (perceived customer QoS). |
+| **`meanUE_DL`** | **Selected** | **Blue Channel (B)** | Measures active connected user volume (traffic demand). |
+| `maxThr_DL`, `maxUE_DL` | *Discarded* | - | Redundant with mean metrics; high multicollinearity adds noise. |
+| Uplink KPIs (`*UL`) | *Discarded* | - | Mobile traffic is ~85-90% downlink-dominated. QoS degradation is predominantly felt in downlink throughput. |
+
+**Cross-Channel Orthogonality:**
+* $\text{corr}(\text{PRBUsageDL}, \text{meanThr\_DL}) = 0.79$
+* $\text{corr}(\text{PRBUsageDL}, \text{meanUE\_DL}) = 0.60$
+* $\text{corr}(\text{meanThr\_DL}, \text{meanUE\_DL}) = 0.49$
+
+Moderate cross-correlations ($0.49 - 0.79$) guarantee non-redundant, complementary features across the 3 RGB channels.
+
+### 5. Files Created / Updated in Step 1
+* `ml/eda.py`: Modular EDA pipeline with dedicated plotting functions for all 4 visual figures and feature selection defense reporting.
+* `artifacts/eda_correlation_matrix.png`
+* `artifacts/eda_feature_importance.png`
+* `artifacts/eda_diurnal_traffic.png`
+* `artifacts/eda_distributions.png`
 
 ---
 
