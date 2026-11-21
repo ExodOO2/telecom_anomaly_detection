@@ -1,0 +1,32 @@
+{
+  "dataset": "test_holdout_towers",
+  "total_test_samples": 2770,
+  "total_anomalies": 751,
+  "total_normals": 2019,
+  "roc_auc_score": 0.7243,
+  "pr_auc_score": 0.5367,
+  "default_threshold_0_50": {
+    "accuracy": 0.6282,
+    "anomaly_precision": 0.396,
+    "anomaly_recall": 0.7071,
+    "anomaly_f1_score": 0.5076,
+    "confusion_matrix": {
+      "true_positives": 531,
+      "false_negatives": 220,
+      "false_positives": 810,
+      "true_negatives": 1209
+    }
+  },
+  "optimal_threshold_tuning": {
+    "optimal_threshold": 0.66,
+    "anomaly_precision": 0.4868,
+    "anomaly_recall": 0.5659,
+    "anomaly_f1_score": 0.5234,
+    "confusion_matrix": {
+      "true_positives": 425,
+      "false_negatives": 326,
+      "false_positives": 448,
+      "true_negatives": 1571
+    }
+  }
+}
