@@ -14,7 +14,7 @@
 | **Step 1** | **Local Environment Setup, Dependency Resolution & Live Contract Verification** | **COMPLETED** | 2026-11-23 |
 | **Step 2** | **API Hardening: Advanced Pydantic Validation, Operational Thresholds & CORS** | **COMPLETED** | 2026-11-23 |
 | **Step 3** | **Live Network Operations Center (NOC) Antenna Simulator (`api/simulate_tower.py`)** | **COMPLETED** | 2026-11-23 |
-| **Step 4** | **Automated Integration & Regression Test Suite (`tests/test_api.py`)** | *Pending* | - |
+| **Step 4** | **Automated Integration & Regression Test Suite (`tests/test_api.py`)** | **COMPLETED** | 2026-11-23 |
 | **Step 5** | **Final System Verification, Documentation & Docker Handoff to Person 3** | *Pending* | - |
 
 ---
@@ -235,3 +235,86 @@ The simulator was verified live against the running FastAPI service with 20 slid
 * Created and verified [`api/simulate_tower.py`](api/simulate_tower.py).
 * Verified end-to-end integration with live FastAPI endpoints.
 * **Next Task (Step 4):** Build the automated test suite in `tests/test_api.py` covering unit and integration tests across schemas, error boundaries, thresholds, and batch execution.
+
+---
+
+## 5. Step 4 Detailed Log: Automated Test Suite (`tests/test_api.py`)
+
+### Objective
+Create a professional, production-grade automated integration and regression test suite using `pytest` and Starlette `TestClient` to validate all API endpoints, operational threshold controls, batch execution, error handling boundaries (HTTP 422), and inference latency SLAs.
+
+---
+
+### A. Test Architecture & Structure
+The test suite in [`tests/test_api.py`](tests/test_api.py) is organized into 5 specialized test classes:
+
+1. **`TestSystemEndpoints` (System Readiness & Middleware):**
+   * Root metadata inspection (`GET /` returns status `online`, version, and `/docs` Swagger URL).
+   * Health readiness probe (`GET /health` returns `status == "healthy"` and verifies ResNet-18 model loaded).
+   * Response latency middleware (`X-Process-Time-Ms` response header present on all endpoints).
+   * CORS headers (verifies `Access-Control-Allow-Origin` allows cross-origin requests for web dashboards).
+
+2. **`TestPredictionEndpoints` (Inference Contracts & Operational Thresholds):**
+   * Single-window normal telemetry evaluation (`POST /predict` returns status `NORMAL`, `anomaly_label == 0`).
+   * Single-window outage telemetry evaluation (`POST /predict` returns status `ANOMALY_DETECTED`, `anomaly_label == 1`).
+   * Balanced threshold mode evaluation ($T=0.66$ applied and reflected in `threshold_applied`).
+   * Dynamic base station cell identifiers (e.g. `SECTOR_5G_DOWNTOWN_04` preserved in response).
+
+3. **`TestBatchPrediction` (Multi-Cell Batch Scoring):**
+   * Multi-cell batch evaluation (`POST /predict/batch` evaluating normal and anomaly cells in one request).
+   * Empty batch handling (submitting `{"requests": []}` safely returns `total_cells == 0`).
+
+4. **`TestValidationAndErrorHandling` (Strict Schema Boundary Enforcement — HTTP 422):**
+   * Reject incomplete window (15 steps) before invoking PyTorch.
+   * Reject oversized window (17 steps) before invoking PyTorch.
+   * Reject physically impossible radio usage (`PRBUsageDL = 150.0%`).
+   * Reject negative radio load (`PRBUsageDL = -5.0%`).
+   * Reject negative throughput (`meanThr_DL = -1.5 Mbps`).
+   * Reject negative connected users (`meanUE_DL = -2.0`).
+   * Reject out-of-range decision thresholds ($> 0.95$ or $< 0.05$, e.g. `1.50`).
+   * Reject readings missing required KPI fields (e.g. missing `meanThr_DL`).
+
+5. **`TestPerformanceSLA` (CPU Latency Benchmark):**
+   * Verifies post-warmup forward pass execution latency conforms to real-time SLA limits ($< 250$ ms).
+
+---
+
+### B. Automated Test Execution Results (`python -m pytest tests/ -v`)
+
+```text
+============================= test session starts =============================
+platform win32 -- Python 3.14.0, pytest-9.2.0, pluggy-1.7.0 -- C:\Python314\python.exe
+rootdir: C:\Users\LENOVO\OneDrive\Desktop\Telecom_anomalie_detection
+collected 19 items
+
+tests/test_api.py::TestSystemEndpoints::test_root_endpoint_metadata PASSED              [  5%]
+tests/test_api.py::TestSystemEndpoints::test_healthcheck_model_readiness PASSED          [ 10%]
+tests/test_api.py::TestSystemEndpoints::test_latency_timing_header_present PASSED       [ 15%]
+tests/test_api.py::TestSystemEndpoints::test_cors_headers_configured PASSED             [ 21%]
+tests/test_api.py::TestPredictionEndpoints::test_predict_normal_window PASSED           [ 26%]
+tests/test_api.py::TestPredictionEndpoints::test_predict_anomaly_window PASSED          [ 31%]
+tests/test_api.py::TestPredictionEndpoints::test_predict_balanced_threshold_066 PASSED  [ 36%]
+tests/test_api.py::TestPredictionEndpoints::test_predict_custom_cell_identifier PASSED  [ 42%]
+tests/test_api.py::TestBatchPrediction::test_batch_predict_multiple_cells PASSED        [ 47%]
+tests/test_api.py::TestBatchPrediction::test_batch_predict_empty_list PASSED            [ 52%]
+tests/test_api.py::TestValidationAndErrorHandling::test_reject_window_with_15_steps PASSED [ 57%]
+tests/test_api.py::TestValidationAndErrorHandling::test_reject_window_with_17_steps PASSED [ 63%]
+tests/test_api.py::TestValidationAndErrorHandling::test_reject_prb_above_100_percent PASSED [ 68%]
+tests/test_api.py::TestValidationAndErrorHandling::test_reject_negative_prb PASSED     [ 73%]
+tests/test_api.py::TestValidationAndErrorHandling::test_reject_negative_throughput PASSED [ 78%]
+tests/test_api.py::TestValidationAndErrorHandling::test_reject_negative_connected_users PASSED [ 84%]
+tests/test_api.py::TestValidationAndErrorHandling::test_reject_threshold_out_of_bounds PASSED [ 89%]
+tests/test_api.py::TestValidationAndErrorHandling::test_reject_missing_required_kpi_field PASSED [ 94%]
+tests/test_api.py::TestPerformanceSLA::test_cpu_inference_latency_sla PASSED            [100%]
+
+======================= 19 passed, 1 warning in 27.39s ========================
+```
+
+**Summary:** 19 passed, 0 failed (100% pass rate).
+
+---
+
+### C. Deliverables & Next Action
+* Created [`tests/__init__.py`](tests/__init__.py) and [`tests/test_api.py`](tests/test_api.py).
+* Automated CI/CD-ready regression test suite fully functional.
+* **Next Task (Step 5):** Docker handoff to Person 3, review Dockerfile configuration (`uvicorn api.app:app`), and final project polish.
