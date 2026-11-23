@@ -12,7 +12,7 @@
 | Phase | Milestone Description | Status | Completion Date |
 | :--- | :--- | :---: | :---: |
 | **Step 1** | **Local Environment Setup, Dependency Resolution & Live Contract Verification** | **COMPLETED** | 2026-11-23 |
-| **Step 2** | **API Hardening: Advanced Pydantic Validation, Operational Thresholds & CORS** | *Pending* | - |
+| **Step 2** | **API Hardening: Advanced Pydantic Validation, Operational Thresholds & CORS** | **COMPLETED** | 2026-11-23 |
 | **Step 3** | **Live Network Operations Center (NOC) Antenna Simulator (`api/simulate_tower.py`)** | *Pending* | - |
 | **Step 4** | **Automated Integration & Regression Test Suite (`tests/test_api.py`)** | *Pending* | - |
 | **Step 5** | **Final System Verification, Documentation & Docker Handoff to Person 3** | *Pending* | - |
@@ -110,3 +110,73 @@ Using FastAPI's `TestClient`, both existing endpoints were tested:
 * Created `PERSON_2_PROGRESS.md` to track Person 2's development log.
 * Updated `requirements-api.txt` with `httpx` and `pytest`.
 * **Next Task (Step 2):** Implement API hardening in `api/schemas.py` and `api/app.py` (CORS middleware, request latency logging, custom operational threshold support `0.50` vs `0.66`, and strict boundary validation).
+
+---
+
+## 3. Step 2 Detailed Log: API Hardening & Operational Thresholds
+
+### Objective
+Harden the FastAPI service to production standards by implementing strict schema validation, integrating Person 1's recommended operational decision thresholds ($T=0.50$ Safety Net vs $T=0.66$ Balanced), adding CORS middleware, tracking request latency via HTTP headers, pre-warming ML model artifacts at startup, and supporting batch scoring for multi-cell NOC operations.
+
+---
+
+### A. Schema Hardening (`api/schemas.py`)
+1. **Physical Boundary Checks on Telemetry (`KPIReading`):**
+   * `PRBUsageDL`: Enforced `ge=0.0`, `le=100.0` (Physical radio resource percentage).
+   * `meanThr_DL`: Enforced `ge=0.0` (Non-negative downlink throughput in kbps).
+   * `meanUE_DL`: Enforced `ge=0.0` (Non-negative connected user count).
+2. **Strict Time-Window Length Validation (`PredictRequest`):**
+   * Added a `@field_validator('window')` ensuring `len(v) == 16`.
+   * Rejects incomplete or oversized sliding windows (e.g. 15 or 17 steps) immediately with structured `HTTP 422 Unprocessable Entity` before invoking PyTorch.
+3. **Operational Decision Threshold Field (`threshold`):**
+   * Added `threshold: Optional[float] = Field(default=0.50, ge=0.05, le=0.95)` to `PredictRequest`.
+   * Enables runtime switching between **Safety Net mode ($0.50$)** for maximum incident capture (70.7% recall) and **Balanced mode ($0.66$)** to cut false alarms by 45%.
+4. **Enhanced Prediction Response (`PredictResponse`):**
+   * Added `threshold_applied: float` to make the decision boundary transparent to NOC operators and audit logs.
+   * Fully backward-compatible with Person 1's initial client contract (`cell_name`, `status`, `anomaly_label`, `confidence`, `inference_time_ms`).
+5. **Batch Scoring Schemas:**
+   * Introduced `BatchPredictRequest` (accepting a list of cell prediction requests) and `BatchPredictResponse` (returning aggregated predictions and total processing time).
+6. **OpenAPI / Swagger Interactive Documentation:**
+   * Embedded realistic `json_schema_extra` examples in all models so interactive testing via `/docs` works out-of-the-box.
+
+---
+
+### B. Application Architecture Hardening (`api/app.py`)
+1. **Startup Pre-Warming via FastAPI Lifespan:**
+   * Replaced ad-hoc on-demand model loading with `lifespan(app: FastAPI)` context manager.
+   * Model weights (`best_resnet18.pt`) and scaler (`scaler.joblib`) are pre-loaded into memory when Uvicorn boots, eliminating the ~4-second cold-start latency on the first client request.
+2. **CORS Middleware (`CORSMiddleware`):**
+   * Configured permissive CORS (`allow_origins=["*"]`, `allow_methods=["*"]`, `allow_headers=["*"]`) to guarantee seamless integration with Person 3's Streamlit / React frontend dashboards.
+3. **Processing Latency Middleware:**
+   * Added request-intercepting middleware measuring round-trip server execution time and injecting the `X-Process-Time-Ms: <ms>` header into every HTTP response.
+4. **Custom Exception Handling:**
+   * Implemented `@app.exception_handler(ValueError)` returning HTTP 422 JSON payload when data transformation or window validation raises an exception.
+5. **New & Hardened Endpoints:**
+   * `GET /`: API root returning service metadata, status, and route map.
+   * `GET /health`: Healthcheck verifying model readiness.
+   * `POST /predict`: Single 16-step window inference with custom threshold support.
+   * `POST /predict/batch`: Batch multi-cell telemetry scoring.
+
+---
+
+### C. Comprehensive Verification Test Suite
+All 9 automated verification tests executed via Starlette `TestClient` passed cleanly:
+
+| # | Test Description | Target Route | Expected Code | Result | Note |
+| :-: | :--- | :--- | :-: | :-: | :--- |
+| **1** | Root Endpoint Metadata | `GET /` | `200 OK` | **PASSED** | Returns platform name & endpoints |
+| **2** | Healthcheck Readiness | `GET /health` | `200 OK` | **PASSED** | Model loaded & status healthy |
+| **3** | Single Window Normal Telemetry | `POST /predict` | `200 OK` | **PASSED** | `status: "NORMAL"`, `threshold: 0.5` |
+| **4** | Single Window Anomaly Telemetry | `POST /predict` | `200 OK` | **PASSED** | `status: "ANOMALY_DETECTED"`, `confidence: 0.6749` |
+| **5** | Custom Operational Threshold ($T=0.66$) | `POST /predict` | `200 OK` | **PASSED** | Evaluated with Person 1's balanced threshold |
+| **6** | Reject Incomplete Window (15 steps) | `POST /predict` | `422 Unprocessable` | **PASSED** | Validates strict 16-step window requirement |
+| **7** | Reject Out-of-Bounds KPI (`PRB=150%`) | `POST /predict` | `422 Unprocessable` | **PASSED** | Catches corrupted telemetry upstream |
+| **8** | Multi-Cell Batch Prediction | `POST /predict/batch`| `200 OK` | **PASSED** | Successfully scored 2 cells in batch |
+| **9** | Response Timing Header | All endpoints | `200 OK` | **PASSED** | `X-Process-Time-Ms` present on all responses |
+
+---
+
+### D. Deliverables & Next Action
+* Modified `api/schemas.py` and `api/app.py`.
+* All validation constraints and error handlers tested and confirmed.
+* **Next Task (Step 3):** Implement the live NOC antenna telemetry simulator in `api/simulate_tower.py` to stream realistic sliding windows with colorized terminal dashboards.
