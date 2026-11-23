@@ -33,14 +33,19 @@ telecom-qos-mlops/
 │   └── inference.py          # Self-contained prediction function handed to Person 2
 ├── artifacts/                # Model artifacts (best_resnet18.pt, scaler.joblib)
 ├── api/                      # OWNED BY PERSON 2
-│   ├── app.py                # FastAPI service (/health, /predict)
+│   ├── app.py                # FastAPI microservice (/health, /predict, /predict/batch)
 │   ├── schemas.py            # Pydantic request/response validation schemas
-│   └── simulate_tower.py     # Live tower KPI telemetry simulation script
+│   └── simulate_tower.py     # Live NOC antenna telemetry streaming simulator
+├── tests/                    # OWNED BY PERSON 2
+│   └── test_api.py           # Automated pytest integration & regression test suite (19 tests)
 ├── docker/                   # OWNED BY PERSON 3
-│   ├── Dockerfile            # CPU-optimized Python + PyTorch container
-│   └── docker-compose.yml    # Single-command stack launch
+│   ├── Dockerfile            # CPU-optimized Python 3.10 + PyTorch container
+│   └── docker-compose.yml    # Single-command stack launch with healthcheck
+├── .github/workflows/        # OWNED BY PERSON 3
+│   └── ci.yml                # Automated CI/CD pipeline (Pytest + Docker build verification)
 ├── requirements-ml.txt       # ML & Computer Vision dependencies
 ├── requirements-api.txt      # API & serving dependencies
+├── PERSON_2_PROGRESS.md      # Development journal for Person 2
 └── README.md
 ```
 
@@ -56,6 +61,7 @@ Person 2 (API) and Person 3 (Docker) can run and test immediately against `ml/in
 ```json
 {
   "cell_name": "3BLTE",
+  "threshold": 0.50,
   "window": [
     {"PRBUsageDL": 42.5, "meanThr_DL": 38.2, "meanUE_DL": 14.0},
     {"PRBUsageDL": 44.1, "meanThr_DL": 37.9, "meanUE_DL": 15.0}
@@ -71,6 +77,7 @@ Person 2 (API) and Person 3 (Docker) can run and test immediately against `ml/in
   "status": "ANOMALY_DETECTED",
   "anomaly_label": 1,
   "confidence": 0.924,
+  "threshold_applied": 0.50,
   "inference_time_ms": 15.2
 }
 ```
@@ -90,16 +97,30 @@ python ml/train.py
 python ml/evaluate.py
 ```
 
-### For Person 2 (Local API Development)
+### For Person 2 (Local API Development & Testing)
 ```bash
 pip install -r requirements-api.txt
+
 # Start local FastAPI server with hot-reload
 uvicorn api.app:app --reload --port 8000
-# Open Swagger UI in browser: http://localhost:8000/docs
+
+# Open interactive Swagger UI: http://localhost:8000/docs
+
+# Run automated integration & regression test suite (19 tests)
+python -m pytest tests/ -v
+
+# Launch the live NOC antenna telemetry simulator
+python api/simulate_tower.py --threshold 0.66 --speed 0.4
 ```
 
 ### For Person 3 (Docker & Deployment)
 ```bash
-# Build and run the CPU-optimized container
-docker-compose -f docker/docker-compose.yml up --build
+# Build and run the CPU-optimized container via Docker Compose
+docker compose -f docker/docker-compose.yml up --build -d
+
+# Verify container health
+curl http://localhost:8000/health
+
+# Run live streaming test against containerized API
+python api/simulate_tower.py --url http://localhost:8000 --steps 20
 ```

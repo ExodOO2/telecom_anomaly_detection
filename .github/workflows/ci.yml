@@ -1,0 +1,55 @@
+name: Telecom QoS Anomaly Detection CI/CD
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Run Automated API Tests (Pytest)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Install CPU PyTorch
+        run: |
+          pip install --upgrade pip
+          pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements-api.txt
+
+      - name: Run Test Suite
+        run: |
+          python -m pytest tests/ -v
+
+  docker-build:
+    name: Build & Verify Docker Container
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: false
+          tags: telecom-qos-api:latest
