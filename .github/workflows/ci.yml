@@ -44,13 +44,17 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Build Docker Image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: docker/Dockerfile
-          push: false
-          tags: telecom-qos-api:latest
+        run: |
+          docker build -t telecom-qos-api:latest -f docker/Dockerfile .
+
+      - name: Run Container & Verify Health Endpoint
+        run: |
+          docker run -d --name telecom-api-container -p 8000:8000 telecom-qos-api:latest
+          echo "Waiting 8 seconds for Uvicorn startup and ResNet-18 model loading..."
+          sleep 8
+          docker logs telecom-api-container
+          curl --fail --retry 3 --retry-delay 2 http://localhost:8000/health || exit 1
+          echo "Container health check passed successfully!"
+          docker stop telecom-api-container
+          docker rm telecom-api-container

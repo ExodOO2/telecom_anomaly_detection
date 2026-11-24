@@ -113,23 +113,26 @@ The pipeline (`.github/workflows/ci.yml`) executes two staged jobs on `ubuntu-la
                             │
         ┌───────────────────┴───────────────────┐
         ▼                                       ▼
-  Stage 1: TEST                           Stage 2: DOCKER BUILD
-  • Set up Python 3.10                    • Set up Docker Buildx
-  • Install CPU PyTorch                   • Build docker/Dockerfile
-  • Install requirements-api.txt          • Verify zero build regressions
-  • Run 19 Pytest tests                   • (Runs only if tests pass)
+  Stage 1: TEST                           Stage 2: DOCKER BUILD & VERIFY
+  • Set up Python 3.10                    • Native Docker Build (no Buildx wrapper overhead)
+  • Install CPU PyTorch                   • Upgraded pip + PyTorch CPU + PyPI fallback
+  • Install requirements-api.txt          • .dockerignore context optimization
+  • Run 19 Pytest tests                   • Automated live container spin-up & GET /health check
+  • Verify 100% test pass                 • (Runs only if tests pass)
 ```
 
 1. **Job 1 (`test`):**
-   * Sets up Python 3.10 with pip dependency caching.
+   * Sets up Python 3.10 with pip dependency caching (`cache-dependency-path: "requirements-api.txt"`).
    * Installs CPU PyTorch and serving requirements.
    * Runs the full automated regression suite (`python -m pytest tests/ -v`).
    * Verifies all 19 tests pass (System endpoints, Predictions, Thresholds 0.50/0.66, Batch scoring, HTTP 422 validations, CPU latency SLA).
 
 2. **Job 2 (`docker-build`):**
    * Depends on `test` job passing.
-   * Boots Docker Buildx and compiles `docker/Dockerfile`.
-   * Verifies the complete container image builds cleanly with all model artifacts included.
+   * Compiles `docker/Dockerfile` using native Docker engine with `.dockerignore` context pruning.
+   * Installs `libgomp1` system runtime for OpenMP / scikit-learn support.
+   * Runs `pip install --upgrade pip` inside the container to prevent PEP 658 PyTorch wheel index resolution issues.
+   * Boots the container in CI, queries `GET /health`, confirms `HTTP 200 OK (model_loaded: true)`, and terminates cleanly.
 
 ---
 
