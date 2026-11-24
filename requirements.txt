@@ -1,0 +1,2 @@
+# Telecom QoS Anomaly Detection - Default Serving Requirements
+-r requirements-api.txt
